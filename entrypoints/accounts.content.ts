@@ -707,15 +707,25 @@ function modifyAccount(
 
   const usage5h = readMetricPercent(container, '5h');
   const usage7d = readMetricPercent(container, '7d');
-  const actualTemporary =
+  const temporaryByQuotaRule =
     usage5h !== undefined &&
     usage7d !== undefined &&
     (usage5h === 100 || usage7d === 90);
-  if (actualTemporary) {
+  const shouldBeTemporary =
+    plannedStatus === 'temp_unschedulable' || temporaryByQuotaRule;
+  if (shouldBeTemporary) {
+    changed += capAllProgressPercentages(container, 90);
+    const concurrencyTotal =
+      options.concurrency
+        ? generated.concurrencyTotal
+        : findConcurrencyTotal(container) ?? generated.concurrencyTotal;
+    if (setConcurrency(container, 0, concurrencyTotal)) {
+      changed += 1;
+    }
     if (setAccountStatus(container, 'temp_unschedulable')) {
       changed += 1;
     }
-  } else if (plannedStatus && plannedStatus !== 'temp_unschedulable') {
+  } else if (plannedStatus) {
     if (setAccountStatus(container, plannedStatus)) {
       changed += 1;
     }
@@ -737,9 +747,10 @@ function applyStatusConstraints(
   options: ModifyOptions,
 ): void {
   if (status === 'temp_unschedulable') {
-    if (options.usage5h) {
-      values.usage5h = 100;
-    } else if (options.usage7d) {
+    values.usage5h = Math.min(90, values.usage5h);
+    values.usage7d = Math.min(90, values.usage7d);
+    values.usage7dF = Math.min(90, values.usage7dF);
+    if (options.usage7d) {
       values.usage7d = 90;
     }
     return;
@@ -804,11 +815,11 @@ function setUsagePercent(container: HTMLElement, label: UsageMetricLabel, value:
     return false;
   }
   const next = `${Math.round(value)}%`;
-  if (normalizeText(target) === next) {
-    return false;
+  const sameValue = normalizeText(target) === next;
+  if (!sameValue) {
+    target.dataset.sub2apiOriginalText ??= target.textContent?.trim() ?? '';
+    target.textContent = next;
   }
-  target.dataset.sub2apiOriginalText ??= target.textContent?.trim() ?? '';
-  target.textContent = next;
   target.classList.remove('sub2api-percent-low', 'sub2api-percent-medium', 'sub2api-percent-high');
   target.classList.add(`sub2api-percent-${percentTone(value)}`);
   target.setAttribute('title', `随机展示值：${next}`);
@@ -819,7 +830,24 @@ function setUsagePercent(container: HTMLElement, label: UsageMetricLabel, value:
     row.classList.add('sub2api-display-modified');
     updateProgressBars(row, value);
   }
-  return true;
+  return !sameValue;
+}
+
+function capAllProgressPercentages(container: HTMLElement, maximum: number): number {
+  let changed = 0;
+  for (const label of ['5h', '7d', '7d F'] as const) {
+    const current = readMetricPercent(container, label);
+    if (current === undefined || current <= maximum) {
+      if (current !== undefined) {
+        setUsagePercent(container, label, current);
+      }
+      continue;
+    }
+    if (setUsagePercent(container, label, maximum)) {
+      changed += 1;
+    }
+  }
+  return changed;
 }
 
 function updateProgressBars(row: HTMLElement, value: number): void {
@@ -1086,10 +1114,7 @@ function readMoneyValue(element: HTMLElement | undefined): number | undefined {
 
 function setConcurrency(container: HTMLElement, current: number, total: number): boolean {
   const ratio = `${current}/${total}`;
-  const ratioElements = visibleTextElements(container).filter((element) =>
-    /^\d+\s*\/\s*\d+$/.test(normalizeText(element)),
-  );
-  const labeledRatio = ratioElements.find((element) => isConcurrencyRatio(element));
+  const labeledRatio = findConcurrencyRatioElement(container);
 
   if (labeledRatio) {
     if (normalizeText(labeledRatio) === ratio) {
@@ -1117,6 +1142,34 @@ function setConcurrency(container: HTMLElement, current: number, total: number):
   combined.textContent = next;
   combined.classList.add('sub2api-display-modified');
   return true;
+}
+
+function findConcurrencyRatioElement(container: HTMLElement): HTMLElement | undefined {
+  const ratioElements = visibleTextElements(container).filter((element) =>
+    /^\d+\s*\/\s*\d+$/.test(normalizeText(element)),
+  );
+  return ratioElements.find((element) => isConcurrencyRatio(element));
+}
+
+function findConcurrencyTotal(container: HTMLElement): number | undefined {
+  const ratio = findConcurrencyRatioElement(container);
+  const ratioMatch = ratio
+    ? normalizeText(ratio).match(/^\d+\s*\/\s*(\d+)$/)
+    : undefined;
+  const combined = visibleTextElements(container).find((element) => {
+    const text = normalizeText(element);
+    return /并发/i.test(text) && /\d+\s*\/\s*\d+/.test(text);
+  });
+  const match =
+    ratioMatch ??
+    (combined
+      ? normalizeText(combined).match(/\d+\s*\/\s*(\d+)/)
+      : undefined);
+  if (!match) {
+    return undefined;
+  }
+  const total = Number(match[1]);
+  return Number.isFinite(total) && total >= 1 ? total : undefined;
 }
 
 function readMetricPercent(container: HTMLElement, label: UsageMetricLabel): number | undefined {
