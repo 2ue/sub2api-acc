@@ -856,11 +856,12 @@ function updateProgressBars(row: HTMLElement, value: number): void {
   const bars = findProgressBars(row);
 
   for (const bar of bars) {
-    // The page uses inline width bindings for its bars. Reassert the value
-    // with !important so a framework refresh cannot leave the bar stale.
     bar.style.setProperty('width', width, 'important');
     bar.style.setProperty('background-color', color, 'important');
     bar.style.setProperty('transition', 'none', 'important');
+  }
+
+  for (const bar of findProgressAccessibilityTargets(row)) {
     bar.setAttribute('aria-valuenow', String(Math.round(value)));
   }
 }
@@ -899,10 +900,6 @@ function ensureSevenDayFMetric(container: HTMLElement): boolean {
 function prepareGeneratedSevenDayFRow(row: HTMLElement): void {
   row.setAttribute('title', '7d F');
   row.setAttribute('data-test', 'compact-secondary');
-  row.className = row.className.replace(
-    /grid-cols-\[[^\]]+\]/,
-    'grid-cols-[2.75rem_minmax(0,1fr)_2.25rem]',
-  );
 
   const children = Array.from(row.children) as HTMLElement[];
   const label = children[0];
@@ -1312,14 +1309,29 @@ function findMetricRow(value: HTMLElement, label: string): HTMLElement | undefin
 }
 
 function findProgressBars(row: HTMLElement): HTMLElement[] {
-  return Array.from(row.querySelectorAll<HTMLElement>('*')).filter((element) => {
-    const className = typeof element.className === 'string' ? element.className : '';
+  const candidates = Array.from(row.querySelectorAll<HTMLElement>('*'));
+  const inlineWidthBars = candidates.filter((element) => {
     const style = element.getAttribute('style') ?? '';
-    return (
-      element.getAttribute('role') === 'progressbar' ||
-      /progress|bar|track/i.test(className) ||
-      /(?:^|;)\s*width\s*:/i.test(style)
-    );
+    return /(?:^|;)\s*width\s*:/i.test(style) && !hasInlineWidthDescendant(element);
+  });
+  if (inlineWidthBars.length > 0) {
+    return inlineWidthBars;
+  }
+
+  return candidates.filter((element) => {
+    const className = typeof element.className === 'string' ? element.className : '';
+    return /(?:progress-(?:bar|indicator)|\bbar\b)/i.test(className);
+  });
+}
+
+function findProgressAccessibilityTargets(row: HTMLElement): HTMLElement[] {
+  return Array.from(row.querySelectorAll<HTMLElement>('[role="progressbar"]'));
+}
+
+function hasInlineWidthDescendant(element: HTMLElement): boolean {
+  return Array.from(element.querySelectorAll<HTMLElement>('*')).some((child) => {
+    const style = child.getAttribute('style') ?? '';
+    return /(?:^|;)\s*width\s*:/i.test(style);
   });
 }
 
