@@ -14,7 +14,7 @@ const ACCOUNT_PATH = 'https://sub2api-max.xiaofengai.cc/manager/accounts';
 export default defineContentScript({
   matches: [`${ACCOUNT_PATH}*`],
   runAt: 'document_idle',
-  main() {
+  main(ctx) {
     injectDisplayStyles();
     const modifier = new AccountDomModifier();
     browser.runtime.onMessage.addListener((message: ApplyMessage) => {

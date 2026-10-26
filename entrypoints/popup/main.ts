@@ -4,28 +4,93 @@ import type {
   ApplyMessage,
   ApplyResult,
   ModifyOptions,
-  PluginSettings,
   SubscriptionMode,
 } from '../../src/shared/types';
 import './styles.css';
+
+const SITE_ORIGIN = 'https://sub2api-max.xiaofengai.cc';
+const ACCOUNTS_URL = `${SITE_ORIGIN}/manager/accounts`;
+const FORECAST_SCRIPT = 'content-scripts/forecast.js';
+const ACCOUNTS_SCRIPT = 'content-scripts/accounts.js';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) {
   throw new Error('Popup mount point is missing');
 }
 
-void renderPopup(app);
+renderMenu(app);
 
-async function renderPopup(root: HTMLDivElement): Promise<void> {
+function renderMenu(root: HTMLDivElement): void {
+  document.body.classList.add('menu-mode');
+  root.innerHTML = `
+    <section class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">SUB2API TOOLS</p>
+          <h1>账号工具</h1>
+        </div>
+        <button class="icon-button" id="open-options" title="打开系统设置" aria-label="打开系统设置">⚙</button>
+      </header>
+
+      <nav class="menu" aria-label="功能菜单">
+        <button class="menu-item" id="menu-forecast" type="button">
+          <span class="menu-icon forecast" aria-hidden="true">◔</span>
+          <span class="menu-copy">
+            <strong>额度预估</strong>
+            <small>预测未来 1h / 2h / 3h / 5h / 24h 可用账号与额度</small>
+          </span>
+          <span class="menu-arrow" aria-hidden="true">›</span>
+        </button>
+        <button class="menu-item" id="menu-randomizer" type="button">
+          <span class="menu-icon randomizer" aria-hidden="true">✦</span>
+          <span class="menu-copy">
+            <strong>数据随机</strong>
+            <small>随机修改当前管理页的账号展示数据</small>
+          </span>
+          <span class="menu-arrow" aria-hidden="true">›</span>
+        </button>
+      </nav>
+      <p class="status" id="status" role="status"></p>
+    </section>
+  `;
+
+  const status = getElement<HTMLParagraphElement>('status');
+  getElement<HTMLButtonElement>('open-options').addEventListener('click', () => {
+    void browser.runtime.openOptionsPage();
+  });
+  getElement<HTMLButtonElement>('menu-randomizer').addEventListener('click', () => {
+    void renderRandomizer(root);
+  });
+  getElement<HTMLButtonElement>('menu-forecast').addEventListener('click', async () => {
+    const button = getElement<HTMLButtonElement>('menu-forecast');
+    button.disabled = true;
+    status.className = 'status';
+    status.textContent = '正在打开额度预估…';
+    try {
+      // 额度预估只依赖接口，站点任意页面都能打开；每次按需注入，不依赖页面里常驻的脚本
+      const tabId = await findActiveTab(SITE_ORIGIN, '请先打开 sub2api 管理后台（任意页面即可）');
+      await browser.scripting.executeScript({ target: { tabId }, files: [FORECAST_SCRIPT] });
+      window.close();
+    } catch (error) {
+      status.className = 'status error';
+      status.textContent = describeTabError(error);
+      button.disabled = false;
+    }
+  });
+}
+
+async function renderRandomizer(root: HTMLDivElement): Promise<void> {
+  document.body.classList.remove('menu-mode');
   const [settings, savedOptions] = await Promise.all([getSettings(), getModifyOptions()]);
   const options: ModifyOptions = { ...defaultModifyOptions, ...savedOptions };
 
   root.innerHTML = `
     <section class="shell">
       <header class="topbar">
-        <div>
+        <button class="icon-button" id="back" title="返回菜单" aria-label="返回菜单">‹</button>
+        <div class="topbar-title">
           <p class="eyebrow">SUB2API DISPLAY TOOL</p>
-          <h1>账号显示调节器</h1>
+          <h1>数据随机</h1>
         </div>
         <button class="icon-button" id="open-options" title="打开系统设置" aria-label="打开系统设置">⚙</button>
       </header>
@@ -134,6 +199,7 @@ async function renderPopup(root: HTMLDivElement): Promise<void> {
   getElement<HTMLButtonElement>('open-options').addEventListener('click', () => {
     void browser.runtime.openOptionsPage();
   });
+  getElement<HTMLButtonElement>('back').addEventListener('click', () => renderMenu(root));
 
   getElement<HTMLButtonElement>('apply').addEventListener('click', async () => {
     const button = getElement<HTMLButtonElement>('apply');
@@ -143,12 +209,9 @@ async function renderPopup(root: HTMLDivElement): Promise<void> {
     await saveModifyOptions(options);
 
     try {
-      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-      if (!tab?.id || !tab.url?.startsWith('https://sub2api-max.xiaofengai.cc/manager/accounts')) {
-        throw new Error('请先打开账号管理页');
-      }
+      const tabId = await findActiveTab(ACCOUNTS_URL, '请先打开账号管理页');
       const message: ApplyMessage = { type: 'APPLY_MODIFICATIONS', options };
-      const result = await browser.tabs.sendMessage<ApplyMessage, ApplyResult>(tab.id, message);
+      const result = await sendToAccountsPage(tabId, message);
       status.className = result.modified > 0 ? 'status success' : 'status warning';
       status.textContent =
         result.modified > 0
@@ -156,10 +219,7 @@ async function renderPopup(root: HTMLDivElement): Promise<void> {
           : '当前页面没有识别到可修改的账号卡片或列表行';
     } catch (error) {
       status.className = 'status error';
-      status.textContent =
-        error instanceof Error && error.message.includes('账号管理页')
-          ? error.message
-          : '无法连接当前页面，请刷新管理页后重试';
+      status.textContent = describeTabError(error);
     } finally {
       button.disabled = false;
     }
@@ -202,6 +262,33 @@ function checkboxMarkup(key: (typeof checkboxKeys)[number], label: string, descr
       </span>
     </label>
   `;
+}
+
+class TabError extends Error {}
+
+async function findActiveTab(urlPrefix: string, hint: string): Promise<number> {
+  const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id || !tab.url?.startsWith(urlPrefix)) {
+    throw new TabError(hint);
+  }
+  return tab.id;
+}
+
+/**
+ * 插件重载或更新后，已打开页面里的旧脚本会失联（Receiving end does not exist）。
+ * 此时重新注入一次再发送；有存活脚本时不会重复注入，避免同一操作执行两遍。
+ */
+async function sendToAccountsPage(tabId: number, message: ApplyMessage): Promise<ApplyResult> {
+  try {
+    return await browser.tabs.sendMessage<ApplyMessage, ApplyResult>(tabId, message);
+  } catch {
+    await browser.scripting.executeScript({ target: { tabId }, files: [ACCOUNTS_SCRIPT] });
+    return browser.tabs.sendMessage<ApplyMessage, ApplyResult>(tabId, message);
+  }
+}
+
+function describeTabError(error: unknown): string {
+  return error instanceof TabError ? error.message : '无法连接当前页面，请刷新页面后重试';
 }
 
 function getElement<T extends HTMLElement>(id: string): T {
