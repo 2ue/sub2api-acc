@@ -4,6 +4,7 @@ import {
   type ShadowRootContentScriptUi,
 } from 'wxt/utils/content-script-ui/shadow-root';
 import { fetchForecastInput, type ForecastInput } from './api';
+import { el } from './dom';
 import { computeForecast, createSeededRandom } from './engine';
 import {
   blockedLabel,
@@ -40,8 +41,6 @@ const MODE_DESCRIPTIONS: Record<ForecastMode, string> = {
   snapshot: '假设之后不再消耗，看该时间点各可调度账号的 5h 窗口还剩多少（不超过各自 7d 剩余）。',
 };
 const DEFAULT_MODE: ForecastMode = 'depletion';
-
-type Child = Node | string | null | undefined | false;
 
 let activeUi: Promise<ShadowRootContentScriptUi<ForecastPanel>> | null = null;
 
@@ -650,19 +649,4 @@ function planSplit(
 function hasMultiplePlans(result: ForecastResult): boolean {
   const labels = new Set(result.horizons.flatMap((horizon) => horizon.byPlan.map((plan) => plan.planLabel)));
   return labels.size > 1;
-}
-
-/** 用 DOM API 构建节点，账号名等文本一律走 textContent，避免注入 */
-function el(tag: string, attrs: Record<string, string> = {}, ...children: Child[]): HTMLElement {
-  const element = document.createElement(tag);
-  for (const [name, value] of Object.entries(attrs)) {
-    element.setAttribute(name, value);
-  }
-  for (const child of children) {
-    if (child === null || child === undefined || child === false || child === '') {
-      continue;
-    }
-    element.append(child);
-  }
-  return element;
 }

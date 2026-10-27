@@ -1,7 +1,30 @@
+import type { HourlyPoint } from './gap';
 import type { ApiAccount, ApiAccountUsage } from './types';
 
 // 页面前端调用的 /admin/* 在该站点实际映射到 /api/v1/manager/*
 const API_BASE = '/api/v1/manager';
+
+/**
+ * 接口来源：
+ * - 在 sub2api 页面里（额度预估面板）：同源请求，登录信息取页面 localStorage；
+ * - 在插件独立页面里（断档分析）：请求站点完整地址，登录信息由调用方从已登录的 sub2api 标签页读取。
+ */
+export interface ApiSource {
+  /** 站点地址；空字符串表示当前页面同源 */
+  origin: string;
+  /** 取登录 token；forceRefresh 为 true 时表示上次的 token 已失效，需要重新读取 */
+  getToken: (forceRefresh: boolean) => Promise<string | null>;
+}
+
+const pageSource: ApiSource = {
+  origin: '',
+  getToken: async () => window.localStorage.getItem('auth_token'),
+};
+let source: ApiSource = pageSource;
+
+export function useApiSource(next: ApiSource): void {
+  source = next;
+}
 const PAGE_SIZE = 100;
 const USAGE_BATCH_SIZE = 100;
 const MAX_PAGES = 50;
@@ -59,26 +82,71 @@ export async function fetchForecastInput(signal?: AbortSignal): Promise<Forecast
   return { accounts, usage };
 }
 
-async function request<T>(path: string, init: RequestInit): Promise<T> {
-  const token = window.localStorage.getItem('auth_token');
-  if (!token) {
-    throw new Error('未找到登录信息，请先登录管理页');
+interface TrendSnapshot {
+  trend?: Array<{ date: string; cost?: number; actual_cost?: number }>;
+}
+
+/**
+ * 站点全部账号按小时的消耗（dashboard snapshot-v2 的 trend），用于估算未来需求。
+ * date 为 "YYYY-MM-DD HH:00"，按请求的时区解释。
+ */
+export async function fetchHourlyUsage(days: number, signal?: AbortSignal): Promise<HourlyPoint[]> {
+  const today = new Date();
+  const start = new Date(today.getTime() - days * 24 * 3_600_000);
+  const query = new URLSearchParams({
+    start_date: localDate(start),
+    end_date: localDate(today),
+    granularity: 'hour',
+    include_stats: 'false',
+    include_trend: 'true',
+    include_model_stats: 'false',
+    include_group_stats: 'false',
+    include_users_trend: 'false',
+  });
+  const data = await request<TrendSnapshot>(`/dashboard/snapshot-v2?${query}`, { signal });
+  const points: HourlyPoint[] = [];
+  for (const item of data.trend ?? []) {
+    const match = /^(\d{4})-(\d{2})-(\d{2}) (\d{2})/.exec(item.date);
+    const cost = item.cost ?? item.actual_cost;
+    if (!match || typeof cost !== 'number' || !Number.isFinite(cost)) {
+      continue;
+    }
+    const [, year, month, day, hour] = match;
+    points.push({ at: new Date(Number(year), Number(month) - 1, Number(day), Number(hour)).getTime(), cost });
   }
+  return points;
+}
+
+function localDate(time: Date): string {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${time.getFullYear()}-${pad(time.getMonth() + 1)}-${pad(time.getDate())}`;
+}
+
+async function request<T>(path: string, init: RequestInit): Promise<T> {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const separator = path.includes('?') ? '&' : '?';
-  const response = await fetch(
-    `${API_BASE}${path}${separator}timezone=${encodeURIComponent(timezone)}`,
-    {
+  const url = `${source.origin}${API_BASE}${path}${separator}timezone=${encodeURIComponent(timezone)}`;
+  const send = async (forceRefresh: boolean) => {
+    const token = await source.getToken(forceRefresh);
+    if (!token) {
+      throw new Error('未找到登录信息，请先在浏览器中打开并登录 sub2api 管理后台');
+    }
+    return fetch(url, {
       ...init,
-      credentials: 'same-origin',
+      credentials: source.origin ? 'include' : 'same-origin',
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
-    },
-  );
+    });
+  };
+  let response = await send(false);
   if (response.status === 401) {
-    throw new Error('登录已过期，请刷新管理页后重试');
+    // 页面可能已经刷新过 token，重新读取一次再试
+    response = await send(true);
+  }
+  if (response.status === 401) {
+    throw new Error('登录已过期，请在 sub2api 页面重新登录后再刷新');
   }
   if (!response.ok) {
     throw new Error(`接口请求失败（HTTP ${response.status}）`);

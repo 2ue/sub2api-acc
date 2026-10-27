@@ -41,6 +41,14 @@ function renderMenu(root: HTMLDivElement): void {
           </span>
           <span class="menu-arrow" aria-hidden="true">›</span>
         </button>
+        <button class="menu-item" id="menu-gap" type="button">
+          <span class="menu-icon gap" aria-hidden="true">▤</span>
+          <span class="menu-copy">
+            <strong>断档分析</strong>
+            <small>新标签页打开：按需求逐段模拟，给出断档风险、扩容和补号建议</small>
+          </span>
+          <span class="menu-arrow" aria-hidden="true">›</span>
+        </button>
         <button class="menu-item" id="menu-randomizer" type="button">
           <span class="menu-icon randomizer" aria-hidden="true">✦</span>
           <span class="menu-copy">
@@ -61,21 +69,29 @@ function renderMenu(root: HTMLDivElement): void {
   getElement<HTMLButtonElement>('menu-randomizer').addEventListener('click', () => {
     void renderRandomizer(root);
   });
-  getElement<HTMLButtonElement>('menu-forecast').addEventListener('click', async () => {
-    const button = getElement<HTMLButtonElement>('menu-forecast');
-    button.disabled = true;
-    status.className = 'status';
-    status.textContent = '正在打开额度预估…';
-    try {
-      // 额度预估只依赖接口，站点任意页面都能打开；每次按需注入，不依赖页面里常驻的脚本
-      const tabId = await findActiveTab(SITE_ORIGIN, '请先打开 sub2api 管理后台（任意页面即可）');
-      await browser.scripting.executeScript({ target: { tabId }, files: [FORECAST_SCRIPT] });
-      window.close();
-    } catch (error) {
-      status.className = 'status error';
-      status.textContent = describeTabError(error);
-      button.disabled = false;
-    }
+  // 额度预估和断档分析只依赖接口，站点任意页面都能打开；每次按需注入，不依赖页面里常驻的脚本
+  const openInPage = (buttonId: string, file: string, loading: string) => {
+    const button = getElement<HTMLButtonElement>(buttonId);
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      status.className = 'status';
+      status.textContent = loading;
+      try {
+        const tabId = await findActiveTab(SITE_ORIGIN, '请先打开 sub2api 管理后台（任意页面即可）');
+        await browser.scripting.executeScript({ target: { tabId }, files: [file] });
+        window.close();
+      } catch (error) {
+        status.className = 'status error';
+        status.textContent = describeTabError(error);
+        button.disabled = false;
+      }
+    });
+  };
+  openInPage('menu-forecast', FORECAST_SCRIPT, '正在打开额度预估…');
+  // 断档分析是插件独立页面，在新标签页打开，不覆盖当前页面；条件通过 URL 参数保存
+  getElement<HTMLButtonElement>('menu-gap').addEventListener('click', async () => {
+    await browser.tabs.create({ url: browser.runtime.getURL('/gap.html') });
+    window.close();
   });
 }
 

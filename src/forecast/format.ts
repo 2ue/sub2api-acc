@@ -67,9 +67,14 @@ export function formatDuration(ms: number): string {
   return restHours ? `${days}d ${restHours}h` : `${days}d`;
 }
 
-/** 预测时长加后缀：整天且超过 1 天时按天显示（2 天后 / 3 天内），其余按小时（5h 后 / 24h 内） */
-export function horizonSpan(hours: number, suffix: '后' | '内'): string {
-  return hours > 24 && hours % 24 === 0 ? `${hours / 24} 天${suffix}` : `${hours}h ${suffix}`;
+/** 时长加后缀：整天且超过 1 天时按天显示（2 天后 / 3 天内），其余按小时（5h 后 / 24h 内） */
+export function horizonSpan(hours: number, suffix: string): string {
+  return joinSuffix(hours > 24 && hours % 24 === 0 ? `${hours / 24} 天` : `${hours}h`, suffix);
+}
+
+/** 以字母 / 数字结尾时与中文后缀之间加空格：“24h 内”“昨天平均” */
+export function joinSuffix(text: string, suffix: string): string {
+  return /[A-Za-z0-9]$/.test(text) && suffix ? `${text} ${suffix}` : `${text}${suffix}`;
 }
 
 export function horizonLabel(hours: number): string {

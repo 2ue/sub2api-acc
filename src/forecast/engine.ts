@@ -122,7 +122,20 @@ export function computeForecast(
 ): ForecastResult {
   const mode = options.mode ?? 'snapshot';
   const horizonHours = options.horizonHours ?? FORECAST_HORIZON_HOURS;
-  const random = options.random ?? Math.random;
+  const forecasts = estimateAccounts(accounts, usage, now, options.random ?? Math.random);
+  return summarize(forecasts, now, horizonHours, mode);
+}
+
+/**
+ * 每个账号的分类（可用 / 冷却 / 不可预估）、恢复时间、存活期限，以及 5h / 7d 完整额度与当前剩余的估算范围。
+ * 额度预估面板和断档分析页共用这一份估算。
+ */
+export function estimateAccounts(
+  accounts: ApiAccount[],
+  usage: Record<string, ApiAccountUsage | undefined>,
+  now: number,
+  random: () => number = Math.random,
+): AccountForecast[] {
   const drafts = accounts.map((account): AccountDraft => {
     const plan = resolvePlan(account.extra);
     const accountUsage = usage[String(account.id)];
@@ -138,8 +151,7 @@ export function computeForecast(
   });
 
   const peers = collectPeers(drafts);
-  const forecasts = drafts.map((draft) => buildAccountForecast(draft, peers, now, random));
-  return summarize(forecasts, now, horizonHours, mode);
+  return drafts.map((draft) => buildAccountForecast(draft, peers, now, random));
 }
 
 /** 与页面套餐徽标（Team S / Team P / Max 20x ...）的识别规则一致 */

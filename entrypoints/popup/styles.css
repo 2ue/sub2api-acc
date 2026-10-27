@@ -353,6 +353,11 @@ body.menu-mode {
   background: #e7f7ef;
 }
 
+.menu-icon.gap {
+  color: #c2410c;
+  background: #ffedd5;
+}
+
 .menu-icon.randomizer {
   color: #4c5be7;
   background: #eef0ff;
