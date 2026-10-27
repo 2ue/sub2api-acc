@@ -37,7 +37,7 @@ function renderMenu(root: HTMLDivElement): void {
           <span class="menu-icon forecast" aria-hidden="true">◔</span>
           <span class="menu-copy">
             <strong>额度预估</strong>
-            <small>预测未来 1h / 2h / 3h / 5h / 24h 可用账号与额度</small>
+            <small>预测未来 1h / 2h / 3h / 5h / 24h / 2 天 / 3 天可用账号与额度</small>
           </span>
           <span class="menu-arrow" aria-hidden="true">›</span>
         </button>

@@ -1,3 +1,5 @@
+import type { Range } from './types';
+
 const TIME_FORMAT = new Intl.DateTimeFormat('zh-CN', {
   hour: '2-digit',
   minute: '2-digit',
@@ -10,6 +12,23 @@ const DATE_TIME_FORMAT = new Intl.DateTimeFormat('zh-CN', {
   minute: '2-digit',
   hour12: false,
 });
+
+
+/** 上下限相差不到 1% 或 $1 时合并显示一个值 */
+export function formatMoneyRange(range: Range): string {
+  const low = Math.min(range.min, range.max);
+  const high = Math.max(range.min, range.max);
+  if (high - low < Math.max(1, high * 0.01)) {
+    return formatMoney((low + high) / 2);
+  }
+  return `${formatMoney(low)} ~ ${formatMoney(high)}`;
+}
+
+export function formatCountRange(range: Range): string {
+  const low = Math.min(range.min, range.max);
+  const high = Math.max(range.min, range.max);
+  return low === high ? String(low) : `${low} ~ ${high}`;
+}
 
 export function formatMoney(value: number): string {
   if (!Number.isFinite(value) || value <= 0) {
@@ -48,8 +67,13 @@ export function formatDuration(ms: number): string {
   return restHours ? `${days}d ${restHours}h` : `${days}d`;
 }
 
+/** 预测时长加后缀：整天且超过 1 天时按天显示（2 天后 / 3 天内），其余按小时（5h 后 / 24h 内） */
+export function horizonSpan(hours: number, suffix: '后' | '内'): string {
+  return hours > 24 && hours % 24 === 0 ? `${hours / 24} 天${suffix}` : `${hours}h ${suffix}`;
+}
+
 export function horizonLabel(hours: number): string {
-  return hours === 0 ? '现在' : `${hours}h 后`;
+  return hours === 0 ? '现在' : horizonSpan(hours, '后');
 }
 
 const BLOCK_LABELS: Record<string, string> = {
