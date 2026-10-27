@@ -3,3 +3,6 @@ node_modules/
 .wxt/
 .DS_Store
 
+# 调试截图、日志等临时文件不纳入版本管理
+Snipaste_*.png
+*.log
